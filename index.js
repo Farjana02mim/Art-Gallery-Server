@@ -7,27 +7,26 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// middleware
+// ============================
+// Middleware
+// ============================
 app.use(
   cors({
     origin: ["http://localhost:5173"],
     credentials: true,
   })
 );
-
 app.use(express.json());
 
-// mongodb connection
+// ============================
+// MongoDB Connection
+// ============================
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.8v42xkx.mongodb.net/?retryWrites=true&w=majority`;
-
-const client = new MongoClient(uri, {
-  serverApi: ServerApiVersion.v1,
-});
+const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
 
 async function run() {
   try {
     await client.connect();
-
     const db = client.db("art_gallery_db");
     const listCollection = db.collection("listing");
     const paymentsCollection = db.collection("payments");
@@ -37,35 +36,20 @@ async function run() {
     // ============================
     // Latest 6 Listings
     // ============================
-
     app.get("/latest-list", async (req, res) => {
-      const result = await listCollection
-        .find()
-        .sort({ created_at: -1 })
-        .limit(6)
-        .toArray();
-
+      const result = await listCollection.find().sort({ created_at: -1 }).limit(6).toArray();
       res.send(result);
     });
 
     // ============================
-    // All Listings
+    // All Listings with optional search & category
     // ============================
-
     app.get("/listing", async (req, res) => {
       const category = req.query.category;
       const search = req.query.search || "";
 
-      let query = {
-        $or: [
-          { name: { $regex: search, $options: "i" } },
-          { title: { $regex: search, $options: "i" } },
-        ],
-      };
-
-      if (category && category !== "All") {
-        query.category = category;
-      }
+      let query = { $or: [{ name: { $regex: search, $options: "i" } }, { title: { $regex: search, $options: "i" } }] };
+      if (category && category !== "All") query.category = category;
 
       const result = await listCollection.find(query).toArray();
       res.send(result);
@@ -74,276 +58,252 @@ async function run() {
     // ============================
     // Category Filter
     // ============================
-
     app.get("/category/:categoryName", async (req, res) => {
       const categoryName = req.params.categoryName;
-
-      const result = await listCollection
-        .find({ category: categoryName })
-        .toArray();
-
+      const result = await listCollection.find({ category: categoryName }).toArray();
       res.send(result);
     });
 
     // ============================
     // Single Listing
     // ============================
-
     app.get("/listing/:id", async (req, res) => {
       const id = req.params.id;
-
-      const result = await listCollection.findOne({
-        _id: new ObjectId(id),
-      });
-
+      const result = await listCollection.findOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
     // ============================
     // Add Listing
     // ============================
-
     app.post("/listing", async (req, res) => {
       const data = req.body;
-
       data.created_at = new Date();
       data.updated_at = new Date();
 
-      const result = await listCollection.insertOne(data);
+      data.views = Number(data.views) || 0;
+      data.likes = Number(data.likes) || 0;
+      data.rating = Number(data.rating) || 0;
+      data.ratingCount = Number(data.ratingCount) || 0;
 
+      const result = await listCollection.insertOne(data);
       res.send(result);
     });
 
     // ============================
     // Update Listing
     // ============================
-
     app.put("/listing/:id", async (req, res) => {
       const id = req.params.id;
       const updatedData = req.body;
+      updatedData.updated_at = new Date();
 
-      const filter = { _id: new ObjectId(id) };
+      if (updatedData.views !== undefined) updatedData.views = Number(updatedData.views);
+      if (updatedData.likes !== undefined) updatedData.likes = Number(updatedData.likes);
+      if (updatedData.rating !== undefined) updatedData.rating = Number(updatedData.rating);
+      if (updatedData.ratingCount !== undefined) updatedData.ratingCount = Number(updatedData.ratingCount);
 
-      const updateDoc = {
-        $set: {
-          ...updatedData,
-          updated_at: new Date(),
-        },
-      };
-
-      const result = await listCollection.updateOne(filter, updateDoc);
-
+      const result = await listCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
       res.send(result);
     });
 
     // ============================
     // Delete Listing
     // ============================
-
     app.delete("/listing/:id", async (req, res) => {
       const id = req.params.id;
-
-      const result = await listCollection.deleteOne({
-        _id: new ObjectId(id),
-      });
-
+      const result = await listCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
     // ============================
     // My Arts
     // ============================
-
     app.get("/my-arts", async (req, res) => {
       const email = req.query.email;
+      if (!email) return res.status(400).send({ error: "Email required" });
 
-      if (!email) {
-        return res.status(400).send({ error: "Email required" });
-      }
-
-      const result = await listCollection
-        .find({ email })
-        .sort({ created_at: -1 })
-        .toArray();
-
+      const result = await listCollection.find({ email }).sort({ created_at: -1 }).toArray();
       res.send(result);
     });
 
-    // ============================
-    // View Counter
-    // ============================
+ // ============================
+// View Counter (updated)
+// ============================
+app.patch("/listing/views/:id", async (req, res) => {
+  const id = req.params.id;
 
-    app.patch("/listing/views/:id", async (req, res) => {
-      const id = req.params.id;
+  try {
+    // Increment views and return updated document
+    const result = await listCollection.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $inc: { views: 1 } },
+      { returnDocument: "after" } // returns updated document
+    );
 
-      const result = await listCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $inc: { views: 1 } }
-      );
-
-      res.send(result);
-    });
-
+    res.send({ success: true, views: result.value.views });
+  } catch (err) {
+    console.log(err);
+    res.status(500).send({ success: false, error: "Failed to increment view" });
+  }
+});
     // ============================
     // Like System
     // ============================
-
     app.patch("/listing/like/:id", async (req, res) => {
       const id = req.params.id;
-
       const result = await listCollection.updateOne(
         { _id: new ObjectId(id) },
-        { $inc: { likes: 1 } }
+        [{ $set: { likes: { $add: [{ $toInt: "$likes" }, 1] } } }]
       );
-
       res.send(result);
     });
 
     // ============================
-    // Stripe Checkout Session
+    // Rating System
     // ============================
+    app.patch("/listing/rate/:id", async (req, res) => {
+      const id = req.params.id;
+      const { rating } = req.body;
 
+      const art = await listCollection.findOne({ _id: new ObjectId(id) });
+      const oldRating = Number(art.rating) || 0;
+      const ratingCount = Number(art.ratingCount) || 0;
+
+      const newCount = ratingCount + 1;
+      const newAverage = (oldRating * ratingCount + Number(rating)) / newCount;
+
+      const result = await listCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { rating: Number(newAverage.toFixed(1)), ratingCount: newCount } }
+      );
+      res.send(result);
+    });
+
+    // ============================
+    // Trending Routes
+    // ============================
+    app.get("/trending/views", async (req, res) => {
+      const result = await listCollection.find().sort({ views: -1 }).limit(6).toArray();
+      res.send(result);
+    });
+
+    app.get("/trending/likes", async (req, res) => {
+      const result = await listCollection.find().sort({ likes: -1 }).limit(6).toArray();
+      res.send(result);
+    });
+
+    app.get("/trending/rating", async (req, res) => {
+      const result = await listCollection.find().sort({ rating: -1 }).limit(6).toArray();
+      res.send(result);
+    });
+
+    // ============================
+    // Smart Trending (views*0.5 + likes*0.3 + rating*0.2)
+    // ============================
+    app.get("/trending", async (req, res) => {
+      const result = await listCollection.aggregate([
+        {
+          $addFields: {
+            trendingScore: {
+              $add: [
+                { $multiply: [{ $toInt: "$views" }, 0.5] },
+                { $multiply: [{ $toInt: "$likes" }, 0.3] },
+                { $multiply: [{ $toDouble: "$rating" }, 0.2] },
+              ],
+            },
+          },
+        },
+        { $sort: { trendingScore: -1 } },
+        { $limit: 6 },
+      ]).toArray();
+      res.send(result);
+    });
+
+    // ============================
+    // Stripe Checkout
+    // ============================
     app.post("/create-checkout-session", async (req, res) => {
       try {
         const { price, name, artId, email } = req.body;
-
-        if (!price || !name || !email || !artId) {
-          return res.status(400).send({
-            error: "Missing required fields",
-          });
-        }
-
         const amount = Math.round(Number(price) * 100);
 
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ["card"],
-
-          line_items: [
-            {
-              price_data: {
-                currency: "usd",
-                unit_amount: amount,
-                product_data: {
-                  name: name,
-                },
-              },
-              quantity: 1,
-            },
-          ],
-
+          line_items: [{ price_data: { currency: "usd", unit_amount: amount, product_data: { name } }, quantity: 1 }],
           mode: "payment",
-
           customer_email: email,
-
-          metadata: {
-            artId: artId,
-          },
-
+          metadata: { artId },
           success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
         });
 
         res.send({ url: session.url });
       } catch (error) {
-        console.error("Stripe Error:", error);
-        res.status(500).send({
-          error: "Failed to create checkout session",
-        });
+        console.log(error);
+        res.status(500).send({ error: "Stripe session failed" });
       }
     });
 
     // ============================
     // Payment Success
     // ============================
-
     app.patch("/payment-success", async (req, res) => {
-      try {
-        const sessionId = req.query.session_id;
+  const sessionId = req.query.session_id;
+  if (!sessionId) return res.status(400).send({ success: false, message: "No session ID" });
 
-        if (!sessionId) {
-          return res.status(400).send({
-            error: "Session ID missing",
-          });
-        }
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-        const session = await stripe.checkout.sessions.retrieve(sessionId);
+  if (session.payment_status !== "paid") 
+    return res.send({ success: false, message: "Payment not completed" });
 
-        if (session.payment_status !== "paid") {
-          return res.send({
-            success: false,
-            message: "Payment not completed",
-          });
-        }
+  // Check if payment already recorded
+  const existingPayment = await paymentsCollection.findOne({
+    transactionId: session.payment_intent
+  });
 
-        const artId = session.metadata.artId;
-        const transactionId = session.payment_intent;
+  if (existingPayment) 
+    return res.send({ success: true, message: "Payment already recorded" });
 
-        const existingPayment = await paymentsCollection.findOne({
-          transactionId,
-        });
+  // Insert new payment
+  const paymentData = {
+    artId: session.metadata.artId,
+    transactionId: session.payment_intent,
+    email: session.customer_email,
+    amount: session.amount_total / 100,
+    paymentStatus: "Paid",
+    created_at: new Date(),
+  };
 
-        if (existingPayment) {
-          return res.send({
-            success: true,
-            message: "Payment already saved",
-          });
-        }
-
-        const paymentData = {
-          artId,
-          transactionId,
-          email: session.customer_email,
-          amount: session.amount_total / 100,
-          created_at: new Date(),
-        };
-
-        await paymentsCollection.insertOne(paymentData);
-
-        res.send({
-          success: true,
-          message: "Payment verified and saved",
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          error: "Payment verification failed",
-        });
-      }
+  await paymentsCollection.insertOne(paymentData);
+  res.send({ success: true, message: "Payment recorded successfully" });
+});
+    // ============================
+    // Payment Cancelled
+    // ============================
+    app.get("/dashboard/payment-cancelled", (req, res) => {
+      res.send({ success: false, message: "Payment was cancelled by the user." });
     });
 
     // ============================
     // My Purchases
     // ============================
-
     app.get("/myPurchases", async (req, res) => {
       const email = req.query.email;
-
-      if (!email) {
-        return res.status(400).send({
-          error: "Email required",
-        });
-      }
-
-      const purchases = await paymentsCollection
-        .find({ email })
-        .sort({ created_at: -1 })
-        .toArray();
-
-      res.send(purchases);
+      const result = await paymentsCollection.find({ email }).sort({ created_at: -1 }).toArray();
+      res.send(result);
     });
+
   } finally {
+    // optionally close client
   }
 }
 
 run().catch(console.dir);
 
-// default route
+// ============================
+// Default Route
+// ============================
+app.get("/", (req, res) => res.send("Art Gallery API Running 🚀"));
 
-app.get("/", (req, res) => {
-  res.send("Art Gallery API Running 🚀");
-});
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+app.listen(port, () => console.log(`Server running on port ${port}`));
