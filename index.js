@@ -248,35 +248,42 @@ app.patch("/listing/views/:id", async (req, res) => {
     // ============================
     // Payment Success
     // ============================
-    app.patch("/payment-success", async (req, res) => {
+app.patch("/payment-success", async (req, res) => {
+
   const sessionId = req.query.session_id;
-  if (!sessionId) return res.status(400).send({ success: false, message: "No session ID" });
 
   const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-  if (session.payment_status !== "paid") 
-    return res.send({ success: false, message: "Payment not completed" });
+  const transactionId = session.payment_intent;
 
-  // Check if payment already recorded
+  // check duplicate
   const existingPayment = await paymentsCollection.findOne({
-    transactionId: session.payment_intent
+    transactionId
   });
 
-  if (existingPayment) 
-    return res.send({ success: true, message: "Payment already recorded" });
+  if (existingPayment) {
+    return res.send({
+      success: true,
+      message: "Already recorded",
+      transactionId
+    });
+  }
 
-  // Insert new payment
   const paymentData = {
     artId: session.metadata.artId,
-    transactionId: session.payment_intent,
     email: session.customer_email,
+    transactionId,
     amount: session.amount_total / 100,
     paymentStatus: "Paid",
-    created_at: new Date(),
+    created_at: new Date()
   };
 
   await paymentsCollection.insertOne(paymentData);
-  res.send({ success: true, message: "Payment recorded successfully" });
+
+  res.send({
+    success: true,
+    transactionId
+  });
 });
     // ============================
     // Payment Cancelled
