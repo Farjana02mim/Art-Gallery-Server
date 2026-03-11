@@ -7,6 +7,14 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./art-gallery-85d90-firebase-admin.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
 // ============================
 // Middleware
 // ============================
@@ -17,6 +25,33 @@ app.use(
   })
 );
 app.use(express.json());
+// ============================
+// Firebase Token Verify
+// ============================
+const verifyFBToken = async (req, res, next) => {
+
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  try {
+
+    const token = authHeader.split(" ")[1];
+
+    const decoded = await admin.auth().verifyIdToken(token);
+
+    req.decoded_email = decoded.email;
+
+    next();
+
+  } catch (error) {
+
+    return res.status(401).send({ message: "Invalid token" });
+
+  }
+};
 
 // ============================
 // MongoDB Connection
@@ -28,10 +63,46 @@ async function run() {
   try {
     await client.connect();
     const db = client.db("art_gallery_db");
+    const userCollection = db.collection('users');
     const listCollection = db.collection("listing");
     const paymentsCollection = db.collection("payments");
 
+
     console.log("MongoDB Connected ✅");
+
+    // users related api
+app.post('/users', async (req, res) => {
+
+  const user = req.body;
+
+  // check existing user
+  const existingUser = await userCollection.findOne({
+    email: user.email
+  });
+
+  if (existingUser) {
+    return res.send({
+      message: "User already exists",
+      inserted: false
+    });
+  }
+
+  const newUser = {
+    name: user.name,
+    email: user.email,
+    photoURL: user.photoURL,
+    role: "user",
+    createdAt: new Date()
+  };
+
+  const result = await userCollection.insertOne(newUser);
+
+  res.send({
+    inserted: true,
+    insertedId: result.insertedId
+  });
+
+});
 
     // ============================
     // Latest 6 Listings
@@ -119,13 +190,22 @@ async function run() {
     // ============================
     // My Arts
     // ============================
-    app.get("/my-arts", async (req, res) => {
-      const email = req.query.email;
-      if (!email) return res.status(400).send({ error: "Email required" });
+app.get("/my-arts", verifyFBToken, async (req, res) => {
 
-      const result = await listCollection.find({ email }).sort({ created_at: -1 }).toArray();
-      res.send(result);
-    });
+  const email = req.query.email;
+
+  if (email !== req.decoded_email) {
+    return res.status(403).send({ message: "Forbidden access" });
+  }
+
+  const result = await listCollection
+    .find({ email })
+    .sort({ created_at: -1 })
+    .toArray();
+
+  res.send(result);
+
+});
 
  // ============================
 // View Counter (updated)
@@ -295,11 +375,22 @@ app.patch("/payment-success", async (req, res) => {
     // ============================
     // My Purchases
     // ============================
-    app.get("/myPurchases", async (req, res) => {
-      const email = req.query.email;
-      const result = await paymentsCollection.find({ email }).sort({ created_at: -1 }).toArray();
-      res.send(result);
-    });
+ app.get("/myPurchases", verifyFBToken, async (req, res) => {
+
+  const email = req.query.email;
+
+  if (email !== req.decoded_email) {
+    return res.status(403).send({ message: "Forbidden access" });
+  }
+
+  const result = await paymentsCollection
+    .find({ email })
+    .sort({ created_at: -1 })
+    .toArray();
+
+  res.send(result);
+
+});
 
   } finally {
     // optionally close client
