@@ -66,6 +66,7 @@ async function run() {
     const userCollection = db.collection('users');
     const listCollection = db.collection("listing");
     const paymentsCollection = db.collection("payments");
+    const artistsCollection = db.collection("artists");
 
 
     console.log("MongoDB Connected ✅");
@@ -391,6 +392,129 @@ app.patch("/payment-success", async (req, res) => {
   res.send(result);
 
 });
+
+
+// artists related api
+
+    app.post('/artists', async (req, res) => {
+
+  const artist = req.body;
+
+  artist.status = 'pending';
+  artist.createdAt = new Date();
+
+  const result = await artistsCollection.insertOne(artist);
+
+  res.send(result);
+
+});
+
+app.get('/artists', async (req, res) => {
+
+  const query = {};
+
+  if (req.query.status) {
+    query.status = req.query.status;
+  }
+
+  const result = await artistsCollection.find(query).toArray();
+
+  res.send(result);
+
+});
+
+// Get Single Artist
+app.get('/artists/:id', async (req, res) => {
+
+  const id = req.params.id;
+
+  const result = await artistsCollection.findOne({
+    _id: new ObjectId(id)
+  });
+
+  res.send(result);
+
+});
+
+    // ============================
+    // Latest 6 Arists
+    // ============================
+    app.get('/latest-artists', async (req, res) => {
+
+  const result = await artistsCollection
+    .find({ status: "pending" })
+    .sort({ createdAt: -1 })
+    .limit(6)
+    .toArray();
+
+  res.send(result);
+
+});
+
+// // Approve Artist (Admin)
+// app.patch('/artists/approve/:id', async (req, res) => {
+
+//   const id = req.params.id;
+
+//   const result = await artistsCollection.updateOne(
+//     { _id: new ObjectId(id) },
+//     {
+//       $set: {
+//         status: "approved",
+//         approvedAt: new Date()
+//       }
+//     }
+//   );
+
+//   res.send(result);
+
+// });
+
+// // Reject Artist (Admin)
+// app.patch('/artists/reject/:id', async (req, res) => {
+
+//   const id = req.params.id;
+
+//   const result = await artistsCollection.updateOne(
+//     { _id: new ObjectId(id) },
+//     {
+//       $set: {
+//         status: "rejected"
+//       }
+//     }
+//   );
+
+//   res.send(result);
+
+// });
+
+// // Delete Artist
+// app.delete('/artists/:id', async (req, res) => {
+
+//   const id = req.params.id;
+
+//   const result = await artistsCollection.deleteOne({
+//     _id: new ObjectId(id)
+//   });
+
+//   res.send(result);
+
+// });
+
+// // Get My Artist Profile
+// app.get('/my-artist', verifyFBToken, async (req, res) => {
+
+//   const email = req.query.email;
+
+//   if (email !== req.decoded_email) {
+//     return res.status(403).send({ message: "Forbidden access" });
+//   }
+
+//   const result = await artistsCollection.findOne({ email });
+
+//   res.send(result);
+
+// });
 
   } finally {
     // optionally close client
