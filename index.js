@@ -396,125 +396,170 @@ app.patch("/payment-success", async (req, res) => {
 
 // artists related api
 
-    app.post('/artists', async (req, res) => {
+// ============================
+// Create new artist
+// ============================
+app.post('/artists', async (req, res) => {
+  try {
+    const data = req.body;
 
-  const artist = req.body;
+    // Mandatory fields চেক
+    if (!data.name || !data.email || !data.title) {
+      return res.status(400).send({ message: "Name, email, and title are required" });
+    }
 
-  artist.status = 'pending';
-  artist.createdAt = new Date();
+    const artist = {
+      name: data.name,
+      email: data.email,
+      title: data.title,
+      experience: data.experience || "",
+      portfolio: data.portfolio || "",
+      bio: data.bio || "",
+      image: data.image || "",
+      status: "pending",
+      created_at: new Date(),
+    };
 
-  const result = await artistsCollection.insertOne(artist);
+    const result = await artistsCollection.insertOne(artist);
 
-  res.send(result);
-
-});
-
-app.get('/artists', async (req, res) => {
-
-  const query = {};
-
-  if (req.query.status) {
-    query.status = req.query.status;
+    res.send({
+      insertedId: result.insertedId,
+      message: "Artist request submitted successfully"
+    });
+  } catch (error) {
+    console.error("Failed to insert artist:", error);
+    res.status(500).send({ message: "Failed to submit artist request" });
   }
-
-  const result = await artistsCollection.find(query).toArray();
-
-  res.send(result);
-
 });
 
-// Get Single Artist
+// ============================
+// Get all artists (optional status filter)
+// ============================
+app.get('/artists', async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.status) {
+      query.status = req.query.status; // pending/approved/rejected
+    }
+
+    const result = await artistsCollection.find(query).toArray();
+
+    res.send(result);
+  } catch (error) {
+    console.error("Failed to fetch artists:", error);
+    res.status(500).send({ message: "Failed to fetch artists" });
+  }
+});
+
+// ============================
+// Get single artist by ID
+// ============================
 app.get('/artists/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
 
-  const id = req.params.id;
+    const result = await artistsCollection.findOne({ _id: new ObjectId(id) });
 
-  const result = await artistsCollection.findOne({
-    _id: new ObjectId(id)
-  });
+    if (!result) {
+      return res.status(404).send({ message: "Artist not found" });
+    }
 
-  res.send(result);
-
+    res.send(result);
+  } catch (error) {
+    console.error("Failed to fetch artist:", error);
+    res.status(500).send({ message: "Failed to fetch artist" });
+  }
 });
 
-    // ============================
-    // Latest 6 Arists
-    // ============================
-    app.get('/latest-artists', async (req, res) => {
+// ============================
+// Approve Artist (Admin)
+// ============================
+app.patch('/artists/approve/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
 
-  const result = await artistsCollection
-    .find({ status: "pending" })
-    .sort({ createdAt: -1 })
-    .limit(6)
-    .toArray();
+    const result = await artistsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "approved", approvedAt: new Date() } }
+    );
 
-  res.send(result);
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Artist not found" });
+    }
 
+    res.send({ message: "Artist approved successfully" });
+  } catch (error) {
+    console.error("Failed to approve artist:", error);
+    res.status(500).send({ message: "Failed to approve artist" });
+  }
 });
 
-// // Approve Artist (Admin)
-// app.patch('/artists/approve/:id', async (req, res) => {
+// ============================
+// Reject Artist (Admin)
+// ============================
+app.patch('/artists/reject/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
 
-//   const id = req.params.id;
+    const result = await artistsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "rejected" } }
+    );
 
-//   const result = await artistsCollection.updateOne(
-//     { _id: new ObjectId(id) },
-//     {
-//       $set: {
-//         status: "approved",
-//         approvedAt: new Date()
-//       }
-//     }
-//   );
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Artist not found" });
+    }
 
-//   res.send(result);
+    res.send({ message: "Artist rejected successfully" });
+  } catch (error) {
+    console.error("Failed to reject artist:", error);
+    res.status(500).send({ message: "Failed to reject artist" });
+  }
+});
 
-// });
+// ============================
+// Delete Artist
+// ============================
+app.delete('/artists/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
 
-// // Reject Artist (Admin)
-// app.patch('/artists/reject/:id', async (req, res) => {
+    const result = await artistsCollection.deleteOne({ _id: new ObjectId(id) });
 
-//   const id = req.params.id;
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Artist not found" });
+    }
 
-//   const result = await artistsCollection.updateOne(
-//     { _id: new ObjectId(id) },
-//     {
-//       $set: {
-//         status: "rejected"
-//       }
-//     }
-//   );
+    res.send({ message: "Artist deleted successfully" });
+  } catch (error) {
+    console.error("Failed to delete artist:", error);
+    res.status(500).send({ message: "Failed to delete artist" });
+  }
+});
 
-//   res.send(result);
+// ============================
+// Get My Artist Profile
+// ============================
+app.get('/my-artist', verifyFBToken, async (req, res) => {
+  try {
+    const email = req.query.email;
 
-// });
+    if (email !== req.decoded_email) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
 
-// // Delete Artist
-// app.delete('/artists/:id', async (req, res) => {
+    const result = await artistsCollection.findOne({ email });
 
-//   const id = req.params.id;
+    if (!result) {
+      return res.status(404).send({ message: "Artist profile not found" });
+    }
 
-//   const result = await artistsCollection.deleteOne({
-//     _id: new ObjectId(id)
-//   });
-
-//   res.send(result);
-
-// });
-
-// // Get My Artist Profile
-// app.get('/my-artist', verifyFBToken, async (req, res) => {
-
-//   const email = req.query.email;
-
-//   if (email !== req.decoded_email) {
-//     return res.status(403).send({ message: "Forbidden access" });
-//   }
-
-//   const result = await artistsCollection.findOne({ email });
-
-//   res.send(result);
-
-// });
+    res.send(result);
+  } catch (error) {
+    console.error("Failed to fetch my artist profile:", error);
+    res.status(500).send({ message: "Failed to fetch artist profile" });
+  }
+});
 
   } finally {
     // optionally close client
