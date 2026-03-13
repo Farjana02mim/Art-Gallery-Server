@@ -104,14 +104,21 @@ app.post('/users', async (req, res) => {
   });
 
 });
-app.get('/users', async(req, res) => {
+app.get('/users', verifyFBToken, async(req, res) => {
 
   const result = await userCollection.find().toArray();
   res.send(result);
 
 })
 
-app.patch('/users/:id', async(req, res) => {
+app.get('/users/:email/role',async(req, res) =>{
+  const email = req.params.email;
+  const query = {email}
+  const user = await userCollection.findOne(query);
+  res.send({role: user?.role || 'user'});
+})
+
+app.patch('/users/:id', verifyFBToken, async(req, res) => {
 
   const id = req.params.id;
   const roleInfo = req.body;
