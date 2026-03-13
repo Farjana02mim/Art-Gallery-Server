@@ -119,8 +119,20 @@ app.post('/users', async (req, res) => {
 
 });
 app.get('/users', verifyFBToken, async(req, res) => {
+  const searchText = req.query.searchText;
+  const query = {};
+  if(searchText){
+    //query.name = { $regex: searchText, $options: 'i' }
 
-  const result = await userCollection.find().toArray();
+    query.$or = [
+      {name : { $regex: searchText, $options: 'i' }},
+      {email : { $regex: searchText, $options: 'i' }},
+    ]
+  }
+
+const cursor = userCollection.find(query).sort({createdAt: -1}).limit(3);
+
+  const result = await cursor.toArray();
   res.send(result);
 
 })
