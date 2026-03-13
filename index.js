@@ -71,6 +71,20 @@ async function run() {
 
     console.log("MongoDB Connected ✅");
 
+    // middle more with database access
+const verifyAdmin = async(req,res,next)=>{
+  const email = req.decoded_email;
+  const query = {email};
+  const user = await userCollection.findOne(query);
+
+  if(!user || user.role !=='admin'){
+    return res.status(403).send({message: 'forbidden access!'});
+    
+  }
+  next();
+
+}
+
     // users related api
 app.post('/users', async (req, res) => {
 
@@ -118,7 +132,7 @@ app.get('/users/:email/role',async(req, res) =>{
   res.send({role: user?.role || 'user'});
 })
 
-app.patch('/users/:id', verifyFBToken, async(req, res) => {
+app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async(req, res) => {
 
   const id = req.params.id;
   const roleInfo = req.body;
@@ -487,7 +501,7 @@ app.get('/artists', async (req, res) => {
 // ============================
 // Get single artist by ID
 // ============================
-app.get('/artists/:id', async (req, res) => {
+app.get('/artists/:id',verifyFBToken,verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -507,7 +521,7 @@ app.get('/artists/:id', async (req, res) => {
 // ============================
 // Approve Artist (Admin)
 // ============================
-app.patch('/artists/approve/:id', async (req, res) => {
+app.patch('/artists/approve/:id',verifyFBToken,verifyAdmin, async (req, res) => {
 
   try {
 
@@ -580,7 +594,7 @@ app.get("/latest-artists", async (req, res) => {
 // ============================
 // Reject Artist (Admin)
 // ============================
-app.patch('/artists/reject/:id', async (req, res) => {
+app.patch('/artists/reject/:id',verifyFBToken,verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -603,7 +617,7 @@ app.patch('/artists/reject/:id', async (req, res) => {
 // ============================
 // Delete Artist
 // ============================
-app.delete('/artists/:id', async (req, res) => {
+app.delete('/artists/:id',verifyFBToken,verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -623,7 +637,7 @@ app.delete('/artists/:id', async (req, res) => {
 // ============================
 // Get My Artist Profile
 // ============================
-app.get('/my-artist', verifyFBToken, async (req, res) => {
+app.get('/my-artist', verifyFBToken,verifyAdmin, async (req, res) => {
   try {
     const email = req.query.email;
 
