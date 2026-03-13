@@ -104,6 +104,32 @@ app.post('/users', async (req, res) => {
   });
 
 });
+app.get('/users', async(req, res) => {
+
+  const result = await userCollection.find().toArray();
+  res.send(result);
+
+})
+
+app.patch('/users/:id', async(req, res) => {
+
+  const id = req.params.id;
+  const roleInfo = req.body;
+
+  const query = { _id: new ObjectId(id) }
+
+  const updateDoc = {
+    $set: {
+      role: roleInfo.role
+    }
+  }
+
+  const result = await userCollection.updateOne(query, updateDoc)
+
+  res.send(result)
+
+})
+
 
     // ============================
     // Latest 6 Listings
@@ -475,22 +501,72 @@ app.get('/artists/:id', async (req, res) => {
 // Approve Artist (Admin)
 // ============================
 app.patch('/artists/approve/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
 
+  try {
+
+    const id = req.params.id;
+    const { email } = req.body;
+
+    // update artist status
     const result = await artistsCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { status: "approved", approvedAt: new Date() } }
+      { 
+        $set: { 
+          status: "approved",
+          approvedAt: new Date()
+        } 
+      }
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).send({ message: "Artist not found" });
     }
 
-    res.send({ message: "Artist approved successfully" });
+    // update user role
+    await userCollection.updateOne(
+      { email: email },
+      { $set: { role: "artist" } }
+    );
+
+    res.send({
+      success: true,
+      message: "Artist approved and role updated"
+    });
+
   } catch (error) {
+
     console.error("Failed to approve artist:", error);
-    res.status(500).send({ message: "Failed to approve artist" });
+
+    res.status(500).send({
+      message: "Failed to approve artist"
+    });
+
+  }
+
+});
+
+// ============================
+// Latest Approved Artists (Home Page)
+// ============================
+app.get("/latest-artists", async (req, res) => {
+  try {
+
+    const result = await artistsCollection
+      .find({ status: "approved" })   // only approved artists
+      .sort({ created_at: -1 })       // latest first
+      .limit(6)                       // show only 6
+      .toArray();
+
+    res.send(result);
+
+  } catch (error) {
+
+    console.error("Failed to fetch latest artists:", error);
+
+    res.status(500).send({
+      message: "Failed to fetch latest artists"
+    });
+
   }
 });
 
