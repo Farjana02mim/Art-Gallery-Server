@@ -649,7 +649,7 @@ app.delete('/artists/:id',verifyFBToken,verifyAdmin, async (req, res) => {
 // ============================
 // Get My Artist Profile
 // ============================
-app.get('/my-artist', verifyFBToken,verifyAdmin, async (req, res) => {
+app.get('/my-artist', verifyFBToken, async (req, res) => {
   try {
     const email = req.query.email;
 
@@ -669,6 +669,163 @@ app.get('/my-artist', verifyFBToken,verifyAdmin, async (req, res) => {
     res.status(500).send({ message: "Failed to fetch artist profile" });
   }
 });
+
+// ============================
+// Get My Full Profile
+// ============================
+app.get("/profile", verifyFBToken, async (req, res) => {
+
+  try {
+
+    const email = req.decoded_email;
+
+    const user = await userCollection.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    let artistProfile = null;
+
+    if (user.role === "artist") {
+      artistProfile = await artistsCollection.findOne({ email });
+    }
+
+    res.send({
+      user,
+      artist: artistProfile
+    });
+
+  } catch (error) {
+
+    console.error("Failed to fetch profile:", error);
+
+    res.status(500).send({ message: "Failed to fetch profile" });
+
+  }
+
+});
+
+// ============================
+// Update User Profile
+// ============================
+app.patch("/users/update/:id", verifyFBToken, async (req, res) => {
+  try {
+
+    const id = req.params.id;
+    const data = req.body;
+
+    const result = await userCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          name: data.name,
+          bio: data.bio || "",
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    res.send(result);
+
+  } catch (error) {
+
+    console.error("Profile update failed:", error);
+
+    res.status(500).send({
+      message: "Profile update failed"
+    });
+
+  }
+});
+
+// ============================
+// Update Artist Profile
+// ============================
+app.patch("/artists/update/:id", verifyFBToken, async (req, res) => {
+
+  try {
+
+    const id = req.params.id;
+    const data = req.body;
+
+    const result = await artistsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          title: data.title,
+          bio: data.bio,
+          experience: data.experience,
+          portfolio: data.portfolio,
+          image: data.image,
+          updated_at: new Date()
+        }
+      }
+    );
+
+    res.send(result);
+
+  } catch (error) {
+
+    console.error("Artist profile update failed:", error);
+
+    res.status(500).send({
+      message: "Artist update failed"
+    });
+
+  }
+
+});
+
+// ============================
+// My Sales for logged-in artist
+// ============================
+app.get("/my-sales", verifyFBToken, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (email !== req.decoded_email) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+
+    // fetch all payments
+    const payments = await paymentsCollection
+      .find({}) // all payments
+      .sort({ created_at: -1 })
+      .toArray();
+
+    // fetch listings to match artist email
+    const listings = await listCollection.find({ email }).toArray();
+
+    // filter payments where artId belongs to this artist
+    const mySales = payments.filter((p) =>
+      listings.some((art) => art._id.toString() === p.artId)
+    );
+
+    // enrich with art title
+    const result = mySales.map((p) => {
+  const art = listings.find((a) => a._id.toString() === p.artId);
+  return {
+    _id: p._id,
+    buyerEmail: p.email,
+    artTitle: art?.title || "Unknown",
+    category: art?.category || "-",
+    medium: art?.medium || "-",
+    price: p.amount,
+    date: p.created_at,
+    transactionId: p.transactionId,
+    status: p.paymentStatus,
+  };
+});
+
+    res.send(result);
+  } catch (error) {
+    console.error("Failed to fetch my sales:", error);
+    res.status(500).send({ message: "Failed to fetch my sales" });
+  }
+});
+
+
 
   } finally {
     // optionally close client
