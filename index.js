@@ -161,7 +161,71 @@ app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async(req, res) => {
 
   res.send(result)
 
-})
+});
+
+app.patch("/users/notifications/:id", verifyFBToken, async (req, res) => {
+  const { notifications } = req.body;
+
+  const result = await userCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { notifications } }
+  );
+
+  res.send(result);
+});
+
+// profile image update
+app.patch("/users/update-photo/:id", verifyFBToken, async (req, res) => {
+  const { photoURL } = req.body;
+
+  const result = await userCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { photoURL, updatedAt: new Date() } }
+  );
+
+  res.send(result);
+});
+
+app.patch("/users/change-email/:id", verifyFBToken, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const userId = req.params.id;
+
+    // ১. DB থেকে current user fetch
+    const existingUser = await userCollection.findOne({ _id: new ObjectId(userId) });
+
+    if (!existingUser) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    // ২. Check: logged-in user কি এই user এর owner?
+    if (req.decoded_email !== existingUser.email) {
+      return res.status(403).send({ message: "Forbidden: Cannot change another user's email" });
+    }
+
+    // ৩. Update email
+    const result = await userCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: { email, updatedAt: new Date() } }
+    );
+
+    res.send({ success: true, message: "Email updated successfully", result });
+
+  } catch (error) {
+    console.error("Failed to update email:", error);
+    res.status(500).send({ success: false, message: "Failed to update email" });
+  }
+});
+
+app.delete("/users/:id", verifyFBToken, async (req, res) => {
+  const id = req.params.id;
+
+  await userCollection.deleteOne({ _id: new ObjectId(id) });
+
+  res.send({ message: "Account deleted successfully" });
+});
+
+
 
 
     // ============================
@@ -477,6 +541,7 @@ app.post('/artists', async (req, res) => {
       image: data.image || "",
       status: "pending",
       created_at: new Date(),
+      socials: data.socials,
     };
 
     const result = await artistsCollection.insertOne(artist);
@@ -823,6 +888,27 @@ app.get("/my-sales", verifyFBToken, async (req, res) => {
     console.error("Failed to fetch my sales:", error);
     res.status(500).send({ message: "Failed to fetch my sales" });
   }
+});
+
+
+app.get("/sales-summary", verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+
+  const listings = await listCollection.find({ email }).toArray();
+  const payments = await paymentsCollection.find({
+  artId: { $in: listings.map(a => a._id.toString()) }
+}).toArray();
+
+  const mySales = payments.filter((p) =>
+    listings.some((art) => art._id.toString() === p.artId)
+  );
+
+  const totalRevenue = mySales.reduce((sum, p) => sum + p.amount, 0);
+
+  res.send({
+    totalSales: mySales.length,
+    totalRevenue,
+  });
 });
 
 
