@@ -107,6 +107,7 @@ app.post('/users', async (req, res) => {
     email: user.email,
     photoURL: user.photoURL,
     role: "user",
+    favorites: [],      
     createdAt: new Date()
   };
 
@@ -117,6 +118,26 @@ app.post('/users', async (req, res) => {
     insertedId: result.insertedId
   });
 
+});
+
+// ============================
+// Initialize favorites for existing users (one-time)
+// ============================
+app.patch("/favorites", async (req, res) => {
+  try {
+    const result = await userCollection.updateMany(
+      { favorites: { $exists: false } },
+      { $set: { favorites: [] } }
+    );
+
+    res.send({
+      message: "Favorites initialized for existing users",
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    console.error("Failed to initialize favorites:", error);
+    res.status(500).send({ message: "Failed to initialize favorites" });
+  }
 });
 app.get('/users', verifyFBToken, async(req, res) => {
   const searchText = req.query.searchText;
@@ -225,7 +246,77 @@ app.delete("/users/:id", verifyFBToken, async (req, res) => {
   res.send({ message: "Account deleted successfully" });
 });
 
+// Toggle favorite art for logged-in user
+app.patch("/users/favorite/:artId", verifyFBToken, async (req, res) => {
+  try {
+    const artId = req.params.artId;
+    const email = req.decoded_email;
 
+    const user = await userCollection.findOne({ email });
+    if (!user) return res.status(404).send({ message: "User not found" });
+
+    let favorites = user.favorites || [];
+
+    if (favorites.includes(artId)) {
+      // Remove from favorites
+      favorites = favorites.filter(id => id !== artId);
+    } else {
+      // Add to favorites
+      favorites.push(artId);
+    }
+
+    await userCollection.updateOne({ email }, { $set: { favorites } });
+
+    res.send({ success: true, favorites }); // শুধু ids পাঠাবে
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ success: false, message: "Failed to update favorites" });
+  }
+});
+
+// Get full favorite arts for logged-in user
+app.get("/users/favorites", verifyFBToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+
+    const user = await userCollection.findOne({ email });
+    if (!user) return res.status(404).send({ message: "User not found" });
+
+    const favoriteArtIds = user.favorites || [];
+
+    if (favoriteArtIds.length === 0) return res.send([]);
+
+    const favoriteArts = await listCollection
+      .find({ _id: { $in: favoriteArtIds.map(id => new ObjectId(id)) } })
+      .project({
+        title: 1,
+        name: 1,
+        category: 1,
+        medium: 1,
+        dimensions: 1,
+        year: 1,
+        price: 1,
+        description: 1,
+        location: 1,
+        country: 1,
+        email: 1,
+        image: 1,
+        created_at: 1,
+        updated_at: 1,
+        views: 1,
+        likes: 1,
+        featured: 1,
+        rating: 1,
+        ratingCount: 1
+      })
+      .toArray();
+
+    res.send(favoriteArts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to fetch favorites" });
+  }
+});
 
 
     // ============================
@@ -331,23 +422,34 @@ app.get("/my-arts", verifyFBToken, async (req, res) => {
 
 });
 
- // ============================
-// View Counter (updated)
+// ============================
+// View Counter (robust, fixed 500)
 // ============================
 app.patch("/listing/views/:id", async (req, res) => {
   const id = req.params.id;
+  console.log("Increment views for listing ID:", id);
+
+  // Check for valid ObjectId
+  if (!ObjectId.isValid(id)) {
+    console.log("Invalid ObjectId:", id);
+    return res.status(400).send({ success: false, error: "Invalid listing ID" });
+  }
 
   try {
-    // Increment views and return updated document
     const result = await listCollection.findOneAndUpdate(
       { _id: new ObjectId(id) },
       { $inc: { views: 1 } },
-      { returnDocument: "after" } // returns updated document
+      { returnDocument: "after" } // return updated document
     );
+
+    if (!result.value) {
+      console.log("Listing not found in DB");
+      return res.status(404).send({ success: false, error: "Listing not found" });
+    }
 
     res.send({ success: true, views: result.value.views });
   } catch (err) {
-    console.log(err);
+    console.error("Failed to increment view:", err);
     res.status(500).send({ success: false, error: "Failed to increment view" });
   }
 });
