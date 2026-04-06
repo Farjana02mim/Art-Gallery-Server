@@ -405,21 +405,26 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
     // ============================
     // My Arts
     // ============================
-app.get("/my-arts", verifyFBToken, async (req, res) => {
+app.patch("/listing/views/:id", async (req, res) => {
+  const id = req.params.id;
+  const ip = req.ip;
 
-  const email = req.query.email;
+  try {
+    const result = await listCollection.updateOne(
+      {
+        _id: new ObjectId(id),
+        viewers: { $ne: ip } // already viewed কিনা check
+      },
+      {
+        $inc: { views: 1 },
+        $addToSet: { viewers: ip } // duplicate prevent
+      }
+    );
 
-  if (email !== req.decoded_email) {
-    return res.status(403).send({ message: "Forbidden access" });
+    res.send({ success: true });
+  } catch (error) {
+    res.status(500).send({ success: false });
   }
-
-  const result = await listCollection
-    .find({ email })
-    .sort({ created_at: -1 })
-    .toArray();
-
-  res.send(result);
-
 });
 
 // ============================
@@ -427,31 +432,18 @@ app.get("/my-arts", verifyFBToken, async (req, res) => {
 // ============================
 app.patch("/listing/views/:id", async (req, res) => {
   const id = req.params.id;
-  console.log("Increment views for listing ID:", id);
 
-  // Check for valid ObjectId
-  if (!ObjectId.isValid(id)) {
-    console.log("Invalid ObjectId:", id);
-    return res.status(400).send({ success: false, error: "Invalid listing ID" });
-  }
+  const ip = req.ip; // user IP
 
-  try {
-    const result = await listCollection.findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      { $inc: { views: 1 } },
-      { returnDocument: "after" } // return updated document
-    );
-
-    if (!result.value) {
-      console.log("Listing not found in DB");
-      return res.status(404).send({ success: false, error: "Listing not found" });
+  const result = await listCollection.updateOne(
+    { _id: new ObjectId(id), viewers: { $ne: ip } },
+    {
+      $inc: { views: 1 },
+      $push: { viewers: ip }
     }
+  );
 
-    res.send({ success: true, views: result.value.views });
-  } catch (err) {
-    console.error("Failed to increment view:", err);
-    res.status(500).send({ success: false, error: "Failed to increment view" });
-  }
+  res.send({ success: true });
 });
     // ============================
     // Like System
