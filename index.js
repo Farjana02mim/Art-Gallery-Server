@@ -376,6 +376,24 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
       res.send(result);
     });
 
+    // My Arts for logged-in user
+app.get("/my-arts", verifyFBToken, async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (email !== req.decoded_email) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+
+    const myArts = await listCollection.find({ email }).toArray();
+
+    res.send(myArts);
+  } catch (error) {
+    console.error("Failed to fetch my arts:", error);
+    res.status(500).send({ message: "Failed to fetch my arts" });
+  }
+});
+
     // ============================
     // Update Listing
     // ============================
