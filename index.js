@@ -67,6 +67,7 @@ async function run() {
     const listCollection = db.collection("listing");
     const paymentsCollection = db.collection("payments");
     const artistsCollection = db.collection("artists");
+    const userArtsCollection = db.collection("user_arts");
 
 
     console.log("MongoDB Connected ✅");
@@ -420,18 +421,23 @@ app.get("/my-arts", verifyFBToken, async (req, res) => {
       res.send(result);
     });
 
-    // ============================
-    // My Arts
-    // ============================
+// ============================
+// View Counter (Clean & Error-Free)
+// ============================
 app.patch("/listing/views/:id", async (req, res) => {
-  const id = req.params.id;
-  const ip = req.ip;
-
   try {
+    const id = req.params.id;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ success: false, message: "Invalid ID" });
+    }
+
+    const ip = req.ip;
+
     const result = await listCollection.updateOne(
       {
         _id: new ObjectId(id),
-        viewers: { $ne: ip } // already viewed কিনা check
+        viewers: { $ne: ip }
       },
       {
         $inc: { views: 1 },
@@ -439,29 +445,19 @@ app.patch("/listing/views/:id", async (req, res) => {
       }
     );
 
-    res.send({ success: true });
+    res.send({
+      success: true,
+      message: "View updated",
+      modifiedCount: result.modifiedCount
+    });
+
   } catch (error) {
-    res.status(500).send({ success: false });
+    console.error("View counter error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Server error"
+    });
   }
-});
-
-// ============================
-// View Counter (robust, fixed 500)
-// ============================
-app.patch("/listing/views/:id", async (req, res) => {
-  const id = req.params.id;
-
-  const ip = req.ip; // user IP
-
-  const result = await listCollection.updateOne(
-    { _id: new ObjectId(id), viewers: { $ne: ip } },
-    {
-      $inc: { views: 1 },
-      $push: { viewers: ip }
-    }
-  );
-
-  res.send({ success: true });
 });
     // ============================
     // Like System
@@ -565,40 +561,82 @@ app.patch("/listing/views/:id", async (req, res) => {
     // Payment Success
     // ============================
 app.patch("/payment-success", async (req, res) => {
-
   const sessionId = req.query.session_id;
 
   const session = await stripe.checkout.sessions.retrieve(sessionId);
-
   const transactionId = session.payment_intent;
 
-  // check duplicate
-  const existingPayment = await paymentsCollection.findOne({
-    transactionId
-  });
+  const artId = session.metadata.artId;
+  const email = session.customer_email;
 
-  if (existingPayment) {
-    return res.send({
-      success: true,
-      message: "Already recorded",
-      transactionId
-    });
+  // prevent duplicate
+  const existing = await paymentsCollection.findOne({ transactionId });
+
+  if (existing) {
+    return res.send({ success: true, message: "Already exists" });
   }
 
-  const paymentData = {
-    artId: session.metadata.artId,
-    email: session.customer_email,
+  // 1. save payment
+  await paymentsCollection.insertOne({
+    artId,
+    email,
     transactionId,
     amount: session.amount_total / 100,
     paymentStatus: "Paid",
-    created_at: new Date()
-  };
+    created_at: new Date(),
+  });
 
-  await paymentsCollection.insertOne(paymentData);
+  // 2. ownership unlock (IMPORTANT)
+  await userArtsCollection.updateOne(
+    { email, artId },
+    {
+      $set: {
+        email,
+        artId,
+        downloadAllowed: true,
+        transactionId,
+        purchasedAt: new Date(),
+      }
+    },
+    { upsert: true }
+  );
 
   res.send({
     success: true,
-    transactionId
+    transactionId,
+  });
+});
+
+app.get("/download/:artId", verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+  const artId = req.params.artId;
+
+  // ownership check
+  const allowed = await userArtsCollection.findOne({
+    email,
+    artId,
+    downloadAllowed: true
+  });
+
+  if (!allowed) {
+    return res.status(403).send({
+      success: false,
+      message: "You have not purchased this item"
+    });
+  }
+
+  const art = await listCollection.findOne({
+    _id: new ObjectId(artId)
+  });
+
+  if (!art) {
+    return res.status(404).send({ message: "Art not found" });
+  }
+
+  res.send({
+    success: true,
+    downloadUrl: art.image,
+    title: art.title
   });
 });
     // ============================
@@ -612,20 +650,73 @@ app.patch("/payment-success", async (req, res) => {
     // My Purchases
     // ============================
  app.get("/myPurchases", verifyFBToken, async (req, res) => {
-
   const email = req.query.email;
 
   if (email !== req.decoded_email) {
     return res.status(403).send({ message: "Forbidden access" });
   }
 
-  const result = await paymentsCollection
-    .find({ email })
-    .sort({ created_at: -1 })
-    .toArray();
+  try {
+    const result = await paymentsCollection.aggregate([
+      {
+        $match: { email: email }
+      },
+      {
+        $addFields: {
+          artObjectId: { $toObjectId: "$artId" }
+        }
+      },
+      {
+        $lookup: {
+          from: "listing",
+          localField: "artObjectId",
+          foreignField: "_id",
+          as: "art"
+        }
+      },
+      {
+        $unwind: {
+          path: "$art",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $project: {
+          artId: 1,
+          amount: 1,
+          transactionId: 1,
+          paymentStatus: 1,
+          created_at: 1,
 
-  res.send(result);
+          // 🔥 new fields
+          artTitle: "$art.title",
+          image: "$art.image",
+          category: "$art.category"
+        }
+      },
+      {
+        $sort: { created_at: -1 }
+      }
+    ]).toArray();
 
+    res.send(result);
+
+  } catch (error) {
+    console.error("Failed to fetch purchases:", error);
+    res.status(500).send({ message: "Failed to fetch purchases" });
+  }
+});
+
+app.get("/check-purchase/:artId", verifyFBToken, async (req, res) => {
+  const email = req.decoded_email;
+  const artId = req.params.artId;
+
+  const purchase = await userArtsCollection.findOne({
+    email,
+    artId
+  });
+
+  res.send({ purchased: !!purchase });
 });
 
 
