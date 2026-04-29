@@ -76,6 +76,36 @@ async function run() {
 
     console.log("MongoDB Connected ✅");
 
+    // ============================
+// AUTO AUCTION JOB
+// ============================
+setInterval(async () => {
+  try {
+    const now = new Date();
+
+    await listCollection.updateMany(
+      {
+        "auction.isAuction": true,
+        "auction.status": "upcoming",
+        "auction.startTime": { $lte: now }
+      },
+      { $set: { "auction.status": "live" } }
+    );
+
+    await listCollection.updateMany(
+      {
+        "auction.isAuction": true,
+        "auction.status": "live",
+        "auction.endTime": { $lt: now }
+      },
+      { $set: { "auction.status": "ended" } }
+    );
+
+  } catch (error) {
+    console.log("Auction job error:", error.message);
+  }
+}, 60000);
+
     // middle more with database access
 const verifyAdmin = async(req,res,next)=>{
   const email = req.decoded_email;
@@ -369,6 +399,19 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
     // ============================
     app.post("/listing", async (req, res) => {
       const data = req.body;
+
+      // ================== AUCTION FIELD ADD ==================
+data.auction = {
+  isAuction: data.isAuction || false,
+  startPrice: Number(data.startPrice) || 0,
+  currentBid: Number(data.startPrice) || 0,
+  highestBidder: null,
+  bids: [],
+  startTime: data.startTime ? new Date(data.startTime) : null,
+  endTime: data.endTime ? new Date(data.endTime) : null,
+  status: "upcoming"
+};
+
       data.created_at = new Date();
       data.updated_at = new Date();
 
@@ -380,6 +423,53 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
       const result = await listCollection.insertOne(data);
       res.send(result);
     });
+
+    // ============================
+// PLACE BID
+// ============================
+app.patch("/auction/bid/:id", verifyFBToken, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { bidAmount } = req.body;
+    const email = req.decoded_email;
+
+    const art = await listCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!art.auction?.isAuction) {
+      return res.status(400).send({ message: "Not auction item" });
+    }
+
+    if (art.auction.status !== "live") {
+      return res.status(400).send({ message: "Auction not live" });
+    }
+
+    if (bidAmount <= art.auction.currentBid) {
+      return res.status(400).send({ message: "Bid must be higher" });
+    }
+
+    await listCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          "auction.currentBid": bidAmount,
+          "auction.highestBidder": email
+        },
+        $push: {
+          "auction.bids": {
+            bidder: email,
+            amount: bidAmount,
+            time: new Date()
+          }
+        }
+      }
+    );
+
+    res.send({ success: true });
+
+  } catch (error) {
+    res.status(500).send({ message: "Bid failed" });
+  }
+});
 
     // My Arts for logged-in user
 app.get("/my-arts", verifyFBToken, async (req, res) => {
@@ -1212,32 +1302,3 @@ run().catch(console.dir);
 app.get("/", (req, res) => res.send("Art Gallery API Running 🚀"));
 app.listen(port, () => console.log(`Server running on port ${port}`));
 
-
-//     // ============================
-// // AUTO AUCTION CLOSE JOB
-// // ============================
-// setInterval(async () => {
-//   try {
-//     const now = new Date();
-
-//     const result = await listCollection.updateMany(
-//       {
-//         "auction.isAuction": true,
-//         "auction.status": "live",
-//         "auction.endTime": { $lt: now }
-//       },
-//       {
-//         $set: {
-//           "auction.status": "ended"
-//         }
-//       }
-//     );
-
-//     if (result.modifiedCount > 0) {
-//       console.log(`⏱️ Auto-closed ${result.modifiedCount} auctions`);
-//     }
-
-//   } catch (error) {
-//     console.log("Auto close error:", error.message);
-//   }
-// }, 60000); // every 1 minute
