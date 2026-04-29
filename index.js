@@ -9,7 +9,12 @@ const port = process.env.PORT || 3000;
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./art-gallery-85d90-firebase-admin.json");
+//const serviceAccount = require("./art-gallery-85d90-firebase-admin.json");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -1205,5 +1210,34 @@ run().catch(console.dir);
 // Default Route
 // ============================
 app.get("/", (req, res) => res.send("Art Gallery API Running 🚀"));
-
 app.listen(port, () => console.log(`Server running on port ${port}`));
+
+
+//     // ============================
+// // AUTO AUCTION CLOSE JOB
+// // ============================
+// setInterval(async () => {
+//   try {
+//     const now = new Date();
+
+//     const result = await listCollection.updateMany(
+//       {
+//         "auction.isAuction": true,
+//         "auction.status": "live",
+//         "auction.endTime": { $lt: now }
+//       },
+//       {
+//         $set: {
+//           "auction.status": "ended"
+//         }
+//       }
+//     );
+
+//     if (result.modifiedCount > 0) {
+//       console.log(`⏱️ Auto-closed ${result.modifiedCount} auctions`);
+//     }
+
+//   } catch (error) {
+//     console.log("Auto close error:", error.message);
+//   }
+// }, 60000); // every 1 minute

@@ -1,3 +1,4 @@
 node_modules
 .env
 art-gallery-85d90-firebase-admin.json
+.vercel
