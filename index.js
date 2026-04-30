@@ -25,7 +25,10 @@ admin.initializeApp({
 // ============================
 app.use(
   cors({
-    origin: ["http://localhost:5173"],
+    origin: [
+  "http://localhost:5173",
+  "https://art-gallery-85d90.web.app"
+],
     credentials: true,
   })
 );
@@ -62,24 +65,59 @@ const verifyFBToken = async (req, res, next) => {
 // MongoDB Connection
 // ============================
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.8v42xkx.mongodb.net/?retryWrites=true&w=majority`;
-const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
+let client;
+
+async function connectDB() {
+  if (!client) {
+    client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
+    await client.connect();
+    console.log("MongoDB Connected ✅");
+  }
+  return client;
+}
+
+async function createIndexes() {
+  const db = client.db("art_gallery_db");
+
+  await db.collection("listing").createIndex({ category: 1 });
+  await db.collection("listing").createIndex({ created_at: -1 });
+  await db.collection("listing").createIndex({ name: "text", title: "text" });
+
+  await db.collection("users").createIndex({ email: 1 });
+
+  console.log("Indexes created ✅");
+}
 
 async function run() {
   try {
-    await client.connect();
+    const client = await connectDB();
+    await createIndexes(); 
     const db = client.db("art_gallery_db");
     const userCollection = db.collection('users');
     const listCollection = db.collection("listing");
     const paymentsCollection = db.collection("payments");
     const artistsCollection = db.collection("artists");
 
+    function getAuctionStatus(auction) {
+  const now = new Date();
 
-    console.log("MongoDB Connected ✅");
+  if (!auction.isAuction) return "none";
+
+  if (auction.startTime > now) return "upcoming";
+
+  if (auction.startTime <= now && auction.endTime >= now) return "live";
+
+  if (auction.endTime < now) return "ended";
+
+  return "unknown";
+}
 
     // ============================
 // AUTO AUCTION JOB
 // ============================
-setInterval(async () => {
+const cron = require("node-cron");
+
+cron.schedule("* * * * *", async () => { // every 1 minute
   try {
     const now = new Date();
 
@@ -101,10 +139,11 @@ setInterval(async () => {
       { $set: { "auction.status": "ended" } }
     );
 
+    console.log("Auction job ran:", now);
   } catch (error) {
     console.log("Auction job error:", error.message);
   }
-}, 60000);
+});
 
     // middle more with database access
 const verifyAdmin = async(req,res,next)=>{
@@ -186,8 +225,11 @@ app.get('/users', verifyFBToken, async(req, res) => {
     ]
   }
 
-const cursor = userCollection.find(query).sort({createdAt: -1}).limit(3);
-
+const cursor = userCollection
+  .find(query)
+  .project({ name: 1, email: 1, role: 1, photoURL: 1 })
+  .sort({ createdAt: -1 })
+  .limit(3);
   const result = await cursor.toArray();
   res.send(result);
 
@@ -358,24 +400,62 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
     // Latest 6 Listings
     // ============================
     app.get("/latest-list", async (req, res) => {
-      const result = await listCollection.find().sort({ created_at: -1 }).limit(6).toArray();
-      res.send(result);
+      const result = await listCollection
+  .find({}, { projection: { title: 1, image: 1, price: 1, category: 1 } })
+  .sort({ created_at: -1 })
+  .limit(6)
+  .toArray();
+  res.send(result);
     });
 
     // ============================
     // All Listings with optional search & category
     // ============================
-    app.get("/listing", async (req, res) => {
-      const category = req.query.category;
-      const search = req.query.search || "";
+app.get("/listing", async (req, res) => {
+  const category = req.query.category;
+  const search = req.query.search || "";
 
-      let query = { $or: [{ name: { $regex: search, $options: "i" } }, { title: { $regex: search, $options: "i" } }] };
-      if (category && category !== "All") query.category = category;
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
 
-      const result = await listCollection.find(query).toArray();
-      res.send(result);
-    });
+  let query = {
+    $or: [
+      { name: { $regex: search, $options: "i" } },
+      { title: { $regex: search, $options: "i" } }
+    ]
+  };
 
+  if (category && category !== "All") {
+    query.category = category;
+  }
+
+  const result = await listCollection
+  .find(query)
+  .project({
+    title: 1,
+    name: 1,
+    price: 1,
+    image: 1,
+    category: 1,
+    auction: 1,
+    views: 1,
+    likes: 1,
+    rating: 1
+  })
+  .skip((page - 1) * limit)
+  .limit(limit)
+  .toArray();
+
+  // 🔥 এখানে add করো
+  const updated = result.map(item => {
+    if (item.auction) {
+      item.auction.status = getAuctionStatus(item.auction);
+    }
+    return item;
+  });
+
+  res.send(updated);
+});
     // ============================
     // Category Filter
     // ============================
@@ -388,11 +468,16 @@ app.get("/users/favorites", verifyFBToken, async (req, res) => {
     // ============================
     // Single Listing
     // ============================
-    app.get("/listing/:id", async (req, res) => {
-      const id = req.params.id;
-      const result = await listCollection.findOne({ _id: new ObjectId(id) });
-      res.send(result);
-    });
+   app.get("/listing/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await listCollection.findOne({ _id: new ObjectId(id) });
+
+  if (result?.auction) {
+    result.auction.status = getAuctionStatus(result.auction);
+  }
+
+  res.send(result);
+});
 
     // ============================
     // Add Listing
@@ -433,40 +518,74 @@ app.patch("/auction/bid/:id", verifyFBToken, async (req, res) => {
     const { bidAmount } = req.body;
     const email = req.decoded_email;
 
+    // 🔍 find item
     const art = await listCollection.findOne({ _id: new ObjectId(id) });
 
+    if (!art) {
+      return res.status(404).send({ message: "Item not found" });
+    }
+
+    // ❌ not auction
     if (!art.auction?.isAuction) {
       return res.status(400).send({ message: "Not auction item" });
     }
 
-    if (art.auction.status !== "live") {
+    // ⏱️ time validation
+    const now = new Date();
+
+    if (
+      !art.auction.startTime ||
+      !art.auction.endTime ||
+      art.auction.startTime > now ||
+      art.auction.endTime < now
+    ) {
       return res.status(400).send({ message: "Auction not live" });
     }
 
-    if (bidAmount <= art.auction.currentBid) {
+    // 💰 amount validation
+    const amount = Number(bidAmount);
+
+    if (!amount || isNaN(amount)) {
+      return res.status(400).send({ message: "Invalid bid amount" });
+    }
+
+    if (amount <= art.auction.currentBid) {
       return res.status(400).send({ message: "Bid must be higher" });
     }
 
-    await listCollection.updateOne(
-      { _id: new ObjectId(id) },
+    // 🔥 ATOMIC UPDATE (race condition safe)
+    const result = await listCollection.updateOne(
+      {
+        _id: new ObjectId(id),
+        "auction.currentBid": { $lt: amount } // critical condition
+      },
       {
         $set: {
-          "auction.currentBid": bidAmount,
+          "auction.currentBid": amount,
           "auction.highestBidder": email
         },
         $push: {
           "auction.bids": {
             bidder: email,
-            amount: bidAmount,
+            amount: amount,
             time: new Date()
           }
         }
       }
     );
 
-    res.send({ success: true });
+    // ❌ যদি অন্য কেউ আগে bid করে ফেলে
+    if (result.modifiedCount === 0) {
+      return res.status(400).send({
+        message: "Bid too low or already updated by another user"
+      });
+    }
+
+    // ✅ success
+    res.send({ success: true, currentBid: amount });
 
   } catch (error) {
+    console.error("Bid error:", error);
     res.status(500).send({ message: "Bid failed" });
   }
 });
@@ -480,7 +599,9 @@ app.get("/my-arts", verifyFBToken, async (req, res) => {
       return res.status(403).send({ message: "Forbidden access" });
     }
 
-    const myArts = await listCollection.find({ email }).toArray();
+    const myArts = await listCollection
+  .find({ email }, { projection: { title: 1, image: 1, price: 1 } })
+  .toArray();
 
     res.send(myArts);
   } catch (error) {
@@ -1231,12 +1352,16 @@ app.get("/my-sales", verifyFBToken, async (req, res) => {
 
     // fetch all payments
     const payments = await paymentsCollection
-      .find({}) // all payments
-      .sort({ created_at: -1 })
-      .toArray();
+  .find({ artId: { $in: listingIds } })
+  .toArray();
 
     // fetch listings to match artist email
-    const listings = await listCollection.find({ email }).toArray();
+    const listings = await listCollection
+  .find({ email })
+  .project({ _id: 1, title: 1, category: 1, medium: 1 })
+  .toArray();
+
+const listingIds = listings.map(a => a._id.toString());
 
     // filter payments where artId belongs to this artist
     const mySales = payments.filter((p) =>
@@ -1300,5 +1425,8 @@ run().catch(console.dir);
 // Default Route
 // ============================
 app.get("/", (req, res) => res.send("Art Gallery API Running 🚀"));
-app.listen(port, () => console.log(`Server running on port ${port}`));
+//app.listen(port, () => console.log(`Server running on port ${port}`));
+
+const serverless = require("serverless-http");
+module.exports = serverless(app);
 
